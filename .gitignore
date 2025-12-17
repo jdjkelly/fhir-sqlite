@@ -1,0 +1,7 @@
+node_modules
+fhir-cache
+fhir-packages
+*.db
+.DS_Store
+.cursor
+CLAUDE.md

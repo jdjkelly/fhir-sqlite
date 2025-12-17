@@ -1,0 +1,17 @@
+{
+  "name": "fhir-sqlite",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "dependencies": {
+    "@atomic-ehr/fhir-canonical-manager": "^0.0.15"
+  },
+  "fcm": {
+    "packages": [
+      "hl7.fhir.r4.core"
+    ],
+    "registry": "https://fs.get-ig.org/pkgs/"
+  }
+}
