@@ -36,7 +36,6 @@ function isSimplePath(expr: string): boolean {
 }
 
 function extractPathForResource(expr: string, resourceType: string): string | null {
-  // Handle union expressions like "Patient.gender | Person.gender"
   const parts = expr.split(" | ");
   const prefix = `${resourceType}.`;
 
@@ -54,29 +53,23 @@ function fhirPathToJsonExtract(
   resourceType: string,
   searchParamType: string
 ): string | null {
-  // Handle quantity type with "as Quantity" syntax
-  // e.g., "(Observation.value as Quantity)" -> valueQuantity.value
   if (searchParamType === "quantity") {
     const quantityMatch = expr.match(new RegExp(`\\(${resourceType}\\.([a-zA-Z]+) as Quantity\\)`));
     if (quantityMatch) {
-      const fieldName = quantityMatch[1]; // e.g., "value"
-      // FHIR polymorphic: "value as Quantity" means valueQuantity
+      const fieldName = quantityMatch[1];
       const quantityField = fieldName + "Quantity";
-      // Cast to REAL for numeric comparison
       return `CAST(resource ->> '$.${quantityField}.value' AS REAL)`;
     }
-    return null; // Skip complex quantity expressions
+    return null;
   }
 
   const path = extractPathForResource(expr, resourceType);
   if (!path) return null;
 
-  // Check the extracted path is simple (no .where(), .resolve(), etc.)
   if (!isSimplePath(`${resourceType}.${path}`)) return null;
 
   let jsonPath = "$." + path;
 
-  // For reference types, extract the .reference string directly
   if (searchParamType === "reference") {
     jsonPath += ".reference";
   }
@@ -84,11 +77,10 @@ function fhirPathToJsonExtract(
   return `resource ->> '${jsonPath}'`;
 }
 
-// Types handled by lookup tables instead of generated columns
 const LOOKUP_TABLE_TYPES = new Set(["Address", "HumanName", "Identifier", "ContactPoint", "CodeableConcept"]);
 
-async function buildTypeMap(resourceType: string, manager: any): Promise<Map<string, string>> {
-  const sd = await manager.resolve(`http://hl7.org/fhir/StructureDefinition/${resourceType}`);
+// Now synchronous - takes pre-loaded StructureDefinition
+function buildTypeMap(sd: any, resourceType: string): Map<string, string> {
   const typeMap = new Map<string, string>();
   for (const el of sd?.snapshot?.element || []) {
     if (el.type?.[0]?.code) {
@@ -98,10 +90,8 @@ async function buildTypeMap(resourceType: string, manager: any): Promise<Map<str
   return typeMap;
 }
 
-// Find direct CodeableConcept paths for a resource with cardinality
-// Returns array of { path, isArray } where isArray means max > 1
-async function getCodeableConceptPaths(resourceType: string, manager: any): Promise<{ path: string; isArray: boolean }[]> {
-  const sd = await manager.resolve(`http://hl7.org/fhir/StructureDefinition/${resourceType}`);
+// Now synchronous - takes pre-loaded StructureDefinition
+function getCodeableConceptPaths(sd: any, resourceType: string): { path: string; isArray: boolean }[] {
   const paths: { path: string; isArray: boolean }[] = [];
   const prefix = `${resourceType}.`;
 
@@ -109,7 +99,6 @@ async function getCodeableConceptPaths(resourceType: string, manager: any): Prom
     if (el.type?.[0]?.code !== "CodeableConcept") continue;
     if (!el.path.startsWith(prefix)) continue;
 
-    // Only direct children (no dots after resourceType.)
     const subPath = el.path.slice(prefix.length);
     if (!subPath.includes(".")) {
       const isArray = el.max === "*" || parseInt(el.max) > 1;
@@ -123,11 +112,6 @@ function getTargetType(expression: string, resourceType: string, typeMap: Map<st
   const path = extractPathForResource(expression, resourceType);
   if (!path) return null;
 
-  // Walk up the path to find the target type
-  // e.g., for "contact.address.city", check:
-  //   1. ResourceType.contact.address.city
-  //   2. ResourceType.contact.address  <- finds Address
-  //   3. ResourceType.contact
   const segments = path.split(".");
   for (let i = segments.length; i > 0; i--) {
     const checkPath = `${resourceType}.${segments.slice(0, i).join(".")}`;
@@ -139,11 +123,11 @@ function getTargetType(expression: string, resourceType: string, typeMap: Map<st
   return null;
 }
 
-async function generateSchema(resourceType: string, manager: any) {
-  const searchParams = await manager.getSearchParametersForResource(resourceType);
+// Now synchronous - takes pre-loaded data
+function generateSchema(resourceType: string, searchParams: any[], sd: any) {
   if (!searchParams || searchParams.length === 0) return null;
 
-  const typeMap = await buildTypeMap(resourceType, manager);
+  const typeMap = buildTypeMap(sd, resourceType);
   const columns: string[] = [];
   const referenceColumns: string[] = [];
   const seenColumns = new Set<string>();
@@ -153,7 +137,6 @@ async function generateSchema(resourceType: string, manager: any) {
     if (!sp.expression || sp.expression === "(none)") continue;
     if (sp.code.startsWith("_")) continue;
 
-    // Skip params targeting types handled by lookup tables
     const targetType = getTargetType(sp.expression, resourceType, typeMap);
     if (targetType && LOOKUP_TABLE_TYPES.has(targetType)) continue;
 
@@ -170,7 +153,6 @@ async function generateSchema(resourceType: string, manager: any) {
     const sqlType = FHIR_TYPE_TO_SQL[sp.type] || "TEXT";
     columns.push(`  ${colName} ${sqlType} GENERATED ALWAYS AS (${sql}) STORED`);
 
-    // Track reference columns for indexing
     if (sp.type === "reference") {
       referenceColumns.push(colName);
     }
@@ -193,7 +175,6 @@ ${columns.join(",\n")}
   return { ddl, count: columns.length, skipped, tableName, referenceColumns };
 }
 
-// All FHIR R4 resource types
 const ALL_R4_RESOURCES = [
   "Account", "ActivityDefinition", "AdverseEvent", "AllergyIntolerance", "Appointment",
   "AppointmentResponse", "AuditEvent", "Basic", "Binary", "BiologicallyDerivedProduct",
@@ -240,6 +221,19 @@ async function main() {
 
   const resourceTypes = ALL_R4_RESOURCES;
 
+  // Preload all data in parallel
+  const [searchParamsResults, sdResults] = await Promise.all([
+    Promise.all(resourceTypes.map(r => manager.getSearchParametersForResource(r))),
+    Promise.all(resourceTypes.map(r => manager.resolve(`http://hl7.org/fhir/StructureDefinition/${r}`)))
+  ]);
+
+  const searchParamsMap = new Map<string, any[]>();
+  const sdMap = new Map<string, any>();
+  resourceTypes.forEach((r, i) => {
+    searchParamsMap.set(r, searchParamsResults[i]);
+    sdMap.set(r, sdResults[i]);
+  });
+
   let total = 0;
   let skippedTotal = 0;
   const createdTables: string[] = [];
@@ -250,11 +244,11 @@ async function main() {
   const tableResults: { resourceType: string; tableName: string; referenceColumns: string[] }[] = [];
 
   for (const resourceType of resourceTypes) {
-    const result = await generateSchema(resourceType, manager);
+    const searchParams = searchParamsMap.get(resourceType)!;
+    const sd = sdMap.get(resourceType);
+    const result = generateSchema(resourceType, searchParams, sd);
     if (result) {
       console.log(result.ddl);
-      // Generate indexes for reference columns
-      // Use resourceType for index name (no quotes), tableName for table reference (may have quotes)
       for (const col of result.referenceColumns) {
         console.log(`CREATE INDEX idx_${resourceType.toLowerCase()}_${col} ON ${result.tableName}(${col});`);
       }
@@ -270,7 +264,6 @@ async function main() {
   console.log(`-- Summary: ${createdTables.length} resources, ${total} columns`);
   console.log(`-- ${skippedTotal} complex expressions skipped (would need fhirpath UDF)`);
 
-  // Identifier lookup table
   console.log(`
 -- Identifier lookup table
 CREATE TABLE Identifier (
@@ -356,20 +349,14 @@ CREATE INDEX idx_obscomp_code ON ObservationComponent(codeSystem, code);
 CREATE INDEX idx_obscomp_code_quantity ON ObservationComponent(codeSystem, code, valueQuantity);
 `);
 
-  // Resources with HumanName
   const humanNameResources = ["Patient", "Practitioner", "RelatedPerson", "Person"];
-
-  // Resources with Address
   const addressResources = ["Patient", "Practitioner", "RelatedPerson", "Person", "Organization", "Location"];
-
-  // Resources with telecom (ContactPoint)
   const telecomResources = ["Patient", "Practitioner", "PractitionerRole", "RelatedPerson", "Person"];
 
-  // Generate triggers only for tables that were created
   for (const resourceType of createdTables) {
     const tableName = sanitizeTableName(resourceType);
+    const sd = sdMap.get(resourceType);
 
-    // Identifier trigger
     console.log(`CREATE TRIGGER ${resourceType}_identifier_insert AFTER INSERT ON ${tableName}
 BEGIN
   INSERT INTO Identifier (resourceType, resourceId, system, value)
@@ -381,7 +368,6 @@ BEGIN
 END;
 `);
 
-    // HumanName trigger (only for resources with name)
     if (humanNameResources.includes(resourceType)) {
       console.log(`CREATE TRIGGER ${resourceType}_humanname_insert AFTER INSERT ON ${tableName}
 BEGIN
@@ -396,7 +382,6 @@ END;
 `);
     }
 
-    // Address trigger (only for resources with address)
     if (addressResources.includes(resourceType)) {
       console.log(`CREATE TRIGGER ${resourceType}_address_insert AFTER INSERT ON ${tableName}
 BEGIN
@@ -412,7 +397,6 @@ END;
 `);
     }
 
-    // ContactPoint trigger (only for resources with telecom)
     if (telecomResources.includes(resourceType)) {
       console.log(`CREATE TRIGGER ${resourceType}_contactpoint_insert AFTER INSERT ON ${tableName}
 BEGIN
@@ -426,12 +410,10 @@ END;
 `);
     }
 
-    // Coding trigger (for CodeableConcept fields)
-    const ccPaths = await getCodeableConceptPaths(resourceType, manager);
+    const ccPaths = getCodeableConceptPaths(sd, resourceType);
     if (ccPaths.length > 0) {
       const inserts = ccPaths.map(({ path, isArray }) => {
         if (isArray) {
-          // Array of CodeableConcept: iterate array, then coding
           return `  INSERT INTO Coding (resourceType, resourceId, path, system, code, display)
   SELECT '${resourceType}', NEW.id, '${path}',
          json_extract(c.value, '$.system'),
@@ -441,7 +423,6 @@ END;
        json_each(json_extract(cc.value, '$.coding')) AS c
   WHERE json_extract(c.value, '$.code') IS NOT NULL;`;
         } else {
-          // Single CodeableConcept: just iterate coding
           return `  INSERT INTO Coding (resourceType, resourceId, path, system, code, display)
   SELECT '${resourceType}', NEW.id, '${path}',
          json_extract(c.value, '$.system'),
@@ -459,7 +440,6 @@ END;
 `);
     }
 
-    // ObservationComponent trigger (only for Observation)
     if (resourceType === "Observation") {
       console.log(`CREATE TRIGGER Observation_component_insert AFTER INSERT ON Observation
 BEGIN

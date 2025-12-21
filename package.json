@@ -2,6 +2,11 @@
   "name": "fhir-sqlite",
   "type": "module",
   "private": true,
+  "scripts": {
+    "db:schema": "bun generate.ts > schema.sql",
+    "db:create": "bun load.ts",
+    "db:load": "bun load.ts"
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },
