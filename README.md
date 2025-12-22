@@ -47,6 +47,8 @@
 │  $ bun run db:schema          # Generate schema.sql                 │
 │  $ bun run db:create          # Create fhir.db with sample data     │
 │                                                                     │
+│  $ bun run db:import data.ndjson   # Import your own NDJSON         │
+│                                                                     │
 │  $ sqlite3 fhir.db "SELECT * FROM Patient LIMIT 5"                  │
 │                                                                     │
 ╰─────────────────────────────────────────────────────────────────────╯
@@ -67,16 +69,11 @@ INSERT INTO Patient (id, resource) VALUES ('p1', '{
 }');
 ```
 
-```
-┌─ What happens automatically ────────────────────────────────────────┐
-│                                                                     │
-│  ✓ Generated columns extract gender, birthDate, etc.               │
-│  ✓ Meta fields extracted (versionId, lastUpdated, profile)         │
-│  ✓ Triggers parse identifier[] → Identifier lookup table           │
-│  ✓ Triggers parse name[] → HumanName lookup table                  │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+What happens automatically:
+- Generated columns extract `gender`, `birthDate`, etc.
+- Meta fields extracted (`versionId`, `lastUpdated`, `profile`)
+- Triggers parse `identifier[]` → Identifier lookup table
+- Triggers parse `name[]` → HumanName lookup table
 
 **2. Search** — Query via generated columns or lookup tables:
 
@@ -268,70 +265,16 @@ Triggers auto-populate 6 lookup tables on every INSERT:
 
 ## Commands
 
-```
-╭─────────────────────────────────────────────────────────────────────╮
-│ bun run db:schema                                                   │
-├─────────────────────────────────────────────────────────────────────┤
-│ Generate schema.sql from FHIR R4 SearchParameter definitions       │
-│ → 133 resource tables, 1480+ generated columns, 6 lookup tables    │
-╰─────────────────────────────────────────────────────────────────────╯
-
-╭─────────────────────────────────────────────────────────────────────╮
-│ bun run db:create                                                   │
-├─────────────────────────────────────────────────────────────────────┤
-│ Create fhir.db, load schema, import Synthea sample data            │
-╰─────────────────────────────────────────────────────────────────────╯
-
-╭─────────────────────────────────────────────────────────────────────╮
-│ bun run db:import <ndjson-file> [db-path]                           │
-├─────────────────────────────────────────────────────────────────────┤
-│ Import FHIR resources from NDJSON (one JSON per line)              │
-│                                                                     │
-│ Examples:                                                           │
-│   bun import.ts patients.ndjson                                     │
-│   bun import.ts observations.ndjson ./my-fhir.db                    │
-│                                                                     │
-│ Features:                                                           │
-│   → Auto-detects resource types                                     │
-│   → INSERT OR REPLACE for idempotency                               │
-│   → Batched for performance                                         │
-│   → Triggers populate lookup tables                                 │
-╰─────────────────────────────────────────────────────────────────────╯
-
-╭─────────────────────────────────────────────────────────────────────╮
-│ bun test                                                            │
-├─────────────────────────────────────────────────────────────────────┤
-│ Run tests                                                           │
-╰─────────────────────────────────────────────────────────────────────╯
-```
-
-## Stats
-
-```
-╔═════════════════════════════════════════════════════╗
-║                                                     ║
-║   Resource Tables ·························  133   ║
-║   Generated Columns ······················ 1480+   ║
-║   Meta Columns (per table) ················    3   ║
-║   Lookup Tables ···························    6   ║
-║   Indexes ································   428   ║
-║                                                     ║
-╚═════════════════════════════════════════════════════╝
-```
-
-## Requirements
-
-- [Bun](https://bun.sh)
+| Command | Description |
+|---------|-------------|
+| `bun run db:schema` | Generate `schema.sql` from FHIR R4 SearchParameter definitions |
+| `bun run db:create` | Create database, load schema, and import Synthea sample data |
+| `bun run db:import <file>` | Import NDJSON file into existing database |
+| `bun test` | Run tests |
 
 ## Roadmap
 
-- [x] All 133 FHIR R4 resource types
-- [x] 1,480+ search parameters as generated columns
-- [x] Meta field extraction (versionId, lastUpdated, profile)
-- [x] Lookup tables: Identifier, HumanName, Address, ContactPoint, Coding, ObservationComponent
-- [x] NDJSON import
-- [ ] `.exists()` checks — needs FHIRPath UDF support
-- [ ] `extension()` queries — needs FHIRPath UDF support
+- [ ] FHIRPath UDF columns (`.exists()`, `extension()`, etc.) — waiting on [bun:sqlite UDF support](https://github.com/oven-sh/bun/issues/5051)
 
 ## Acknowledgments
 
