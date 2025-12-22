@@ -5,7 +5,8 @@
   "scripts": {
     "db:schema": "bun generate.ts > schema.sql",
     "db:create": "bun load.ts",
-    "db:load": "bun load.ts"
+    "db:load": "bun load.ts",
+    "db:import": "bun import.ts"
   },
   "devDependencies": {
     "@types/bun": "latest"
