@@ -2,9 +2,9 @@
 
 # fhir-sqlite
 
-**SQLite schema generator for FHIR R4 resources**
+**A complete SQLite schema for FHIR R4 — generated from the spec**
 
-*Store FHIR resources as JSON, query via SQL. Automatic indexing, lookup tables, and search parameter extraction.*
+*Insert JSON. Query SQL. Everything else is automatic.*
 
 [Quick Start](#quick-start) · [How It Works](#how-it-works) · [Tables](#tables) · [Commands](#commands)
 
@@ -55,6 +55,8 @@
 ```
 
 ## How It Works
+
+The schema is generated directly from FHIR R4 [SearchParameter](https://hl7.org/fhir/R4/searchparameter.html) definitions. Every searchable field becomes a SQLite generated column, automatically extracted from the JSON.
 
 **1. Store** — Insert `id` and `resource`. Everything else is automatic:
 
